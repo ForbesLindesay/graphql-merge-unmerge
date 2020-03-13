@@ -1,5 +1,7 @@
 # npm-package-template
 
+[![Greenkeeper badge](https://badges.greenkeeper.io/ForbesLindesay/graphql-merge-unmerge.svg)](https://greenkeeper.io/)
+
 A template for npm packages built in TypeScript
 
 ## Setting Up the New Repo
