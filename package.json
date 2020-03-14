@@ -1,9 +1,9 @@
 {
-  "name": "@forbeslindesay/npm-package-template",
-  "description": "npm-package-template",
+  "name": "graphql-merge-unmerge",
+  "description": "graphql-merge-unmerge",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
-  "repository": "git@github.com:ForbesLindesay/npm-package-template.git",
+  "repository": "git@github.com:ForbesLindesay/graphql-merge-unmerge.git",
   "author": "Forbes Lindesay <forbes@lindesay.co.uk>",
   "license": "MIT",
   "scripts": {
