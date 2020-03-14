@@ -1,9 +1,9 @@
 {
-  "name": "@forbeslindesay/npm-package-template",
-  "description": "npm-package-template",
+  "name": "graphql-merge-unmerge",
+  "description": "graphql-merge-unmerge",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
-  "repository": "git@github.com:ForbesLindesay/npm-package-template.git",
+  "repository": "git@github.com:ForbesLindesay/graphql-merge-unmerge.git",
   "author": "Forbes Lindesay <forbes@lindesay.co.uk>",
   "license": "MIT",
   "scripts": {
@@ -15,18 +15,23 @@
     "test": "jest",
     "ci:test": "jest --silent --maxWorkers=2"
   },
-  "dependencies": {},
+  "dependencies": {
+    "generate-alphabetic-name": "^1.0.0",
+    "graphql": "^14.6.0"
+  },
   "devDependencies": {
     "@forbeslindesay/tsconfig": "^2.0.0",
     "@types/jest": "^24.0.18",
+    "apollo-server": "^2.11.0",
+    "graphql-tag": "^2.10.3",
     "husky": "^3.0.8",
     "jest": "^24.9.0",
     "lint-staged": "^9.4.2",
-    "prettier": "^1.18.2",
+    "prettier": "^1.19.1",
     "rimraf": "^3.0.0",
     "ts-jest": "^24.1.0",
     "tslint": "^5.20.0",
-    "typescript": "^3.6.4"
+    "typescript": "^3.8.3"
   },
   "jest": {
     "moduleFileExtensions": [

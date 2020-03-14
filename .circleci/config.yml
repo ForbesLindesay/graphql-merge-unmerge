@@ -116,8 +116,11 @@ commands:
   publish-dry-run:
     steps:
       - run:
+          name: NPM Auth
+          command: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+      - run:
           name: Release (Dry Run)
-          command: npx semantic-release --dry-run
+          command: npx @changelogversion/cli --dry-run
 
   publish:
     steps:
@@ -126,4 +129,4 @@ commands:
           command: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
       - run:
           name: Release
-          command: npx semantic-release
+          command: npx @changelogversion/cli

@@ -1,40 +1,63 @@
-# npm-package-template
+# graphql-merge-unmerge
 
-A template for npm packages built in TypeScript
-
-## Setting Up the New Repo
-
-1. Hit "Use This Template" to create the repository
-1. Enable [CircleCI](https://circleci.com/add-projects/gh/ForbesLindesay)
-1. Enable [semantic-pull-requests](https://github.com/apps/semantic-pull-requests)
-1. In Settings
-   1. Disable "Wikis"
-   1. Disable "Projects"
-   1. Disable "Allow merge commits"
-   1. Disable "Allow rebase merging"
-   1. Enable "Automatically delete head branches"
-1. Create a new branch
-1. Commit initial code to the branch (be sure to replace all refernces to npm-package-template, and remove these instructions from the README)
-1. Push the new branch and create a PR
-1. In Settings -> Branch Protection, create a new rule
-   1. Use "master" as the branch name pattern
-   1. Enable "Require status checks to pass before merging"
-   1. Select the unit tests as required
-   1. Enable "Include administrators"
-   1. Enable "Restrict who can push to matching branches"
-1. Merge the PR
+A function to help you merge multiple graphql queries and then un-merge the result. This allows you to submit batched queries even if the backend does not support batch queries. e.g. for GitHub this could potentially save you from hitting their rate limit, by merging all your separate queries into one large query.
 
 ## Installation
 
 ```
-yarn add @forbeslindesay/npm-pa ckage-template
+yarn add graphql-merge-unmerge graphql graphql-tag
 ```
 
 ## Usage
 
 ```ts
-import add from '@forbeslindesay/npm-package-template';
+import merge from 'graphql-merge-unmerge';
+import gql from 'graphql-tag';
+import {print} from 'graphql';
 
-const result = add(2, 3);
-// => 5
+const merged = merge([
+  {
+    query: gql`
+      query($id: Int!) {
+        user(id: $id) {
+          id
+          teams {
+            name
+          }
+        }
+      }
+    `,
+    variables: {id: 3},
+  },
+  {
+    query: gql`
+      query($id: Int!) {
+        user(id: $id) {
+          id
+          name
+        }
+      }
+    `,
+    variables: {id: 3},
+  },
+]);
+
+const results = merged.unmerge(
+  (
+    await Promise.all(
+      // Even after merging, there could still be multiple "documents"
+      // representing the queries that need to be sent to the server.
+      // For fairly simple queries, there will almost always just be one
+      // query at the top level.
+      merged.documents.map(({query, variables}) =>
+        callGraphQLServer({query: print(query), variables}),
+      ),
+    )
+  ).map((r) => {
+    if (!r.data) {
+      throw new Error(JSON.stringify(r.errors));
+    }
+    return r.data;
+  }),
+);
 ```
