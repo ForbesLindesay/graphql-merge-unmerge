@@ -271,7 +271,8 @@ function selectByFieldMappings(
   }[],
 ): any {
   if (!set) return value;
-  if (Array.isArray(value)) return value.map((v) => selectSelectionSet(v, set));
+  if (Array.isArray(value))
+    return value.map((v) => selectByFieldMappings(v, set));
   if (!value) return value;
   const result: any = {};
   for (const mapping of set) {
