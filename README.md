@@ -42,14 +42,14 @@ const merged = merge([
   },
 ]);
 
-const results = merged.unmerge(
+const results = merged.unmergeAllQueries(
   (
     await Promise.all(
       // Even after merging, there could still be multiple "documents"
       // representing the queries that need to be sent to the server.
       // For fairly simple queries, there will almost always just be one
       // query at the top level.
-      merged.documents.map(({query, variables}) =>
+      merged.allQueries.map(({query, variables}) =>
         callGraphQLServer({query: print(query), variables}),
       ),
     )

@@ -188,7 +188,7 @@ test('add', async () => {
     },
   ]);
   expect(
-    merged.documents.map(({query, variables}) => ({
+    merged.allQueries.map(({query, variables}) => ({
       query: print(query),
       variables,
     })),
@@ -239,7 +239,7 @@ test('add', async () => {
   const results = merged.unmerge(
     (
       await Promise.all(
-        merged.documents.map(({query, variables}) =>
+        merged.allQueries.map(({query, variables}) =>
           server.executeOperation({query: print(query), variables}),
         ),
       )

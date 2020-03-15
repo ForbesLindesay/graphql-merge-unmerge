@@ -14,21 +14,35 @@ import {generateAlphabeticNameFromNumber} from 'generate-alphabetic-name';
 
 export type Query = {query: DocumentNode; variables: any};
 export default function merge(
-  documents: Query[],
+  queries: Query[],
 ): {
-  documents: Query[];
-  unmerge: (results: any[]) => any[];
+  mergedQuery: Query | undefined;
+  mergedQueries: Query[];
+  unmergedQueries: Query[];
+  allQueries: Query[];
+  unmergeMergedQueries: ((result: any) => any[]) | undefined;
+  unmergeAllQueries: (results: any[]) => any[];
 } {
-  if (documents.length === 1) {
-    return {documents, unmerge: (v) => v};
+  if (queries.length === 1) {
+    return {
+      mergedQuery: undefined,
+      mergedQueries: [],
+      unmergeMergedQueries: undefined,
+
+      unmergedQueries: queries,
+
+      allQueries: queries,
+      unmergeAllQueries: (v) => v,
+    };
   }
-  const unmergedDocuments: Query[] = [];
+  const mergedQueries: Query[] = [];
+  const unmergedQueries: Query[] = [];
   const definitions: {
     query: Query;
     definition: {query: OperationDefinitionNode; variables: any};
   }[] = [];
 
-  for (const q of documents) {
+  for (const q of queries) {
     if (
       q.query.definitions.length === 1 &&
       q.query.definitions[0].kind === 'OperationDefinition' &&
@@ -43,37 +57,55 @@ export default function merge(
         query: q,
         definition: {query: q.query.definitions[0], variables: q.variables},
       });
+      mergedQueries.push(q);
     } else {
-      unmergedDocuments.push(q);
+      unmergedQueries.push(q);
     }
   }
 
-  const merged = mergeDefinitions(definitions.map((d) => d.definition));
+  const merged = definitions.length
+    ? mergeDefinitions(definitions.map((d) => d.definition))
+    : undefined;
 
-  return {
-    documents: [
-      {
-        query: {
-          kind: 'Document',
-          definitions: [merged.query],
-        },
-        variables: merged.variables,
-      },
-      ...unmergedDocuments,
-    ],
-    unmerge: ([mergedResults, ...otherResults]) => {
-      const resultsMap = new Map<Query, any>();
-      const unmerged = merged.unmerge(mergedResults);
-      for (let i = 0; i < unmerged.length; i++) {
-        resultsMap.set(definitions[i].query, unmerged[i]);
-      }
-
-      for (let i = 0; i < otherResults.length; i++) {
-        resultsMap.set(unmergedDocuments[i], otherResults[i]);
-      }
-
-      return documents.map((d) => resultsMap.get(d));
+  const mergedQuery: Query | undefined = merged && {
+    query: {
+      kind: 'Document',
+      definitions: [merged.query],
     },
+    variables: merged.variables,
+  };
+  return {
+    mergedQuery,
+    mergedQueries,
+    unmergedQueries,
+    allQueries: mergedQuery
+      ? [mergedQuery, ...unmergedQueries]
+      : unmergedQueries,
+    unmergeMergedQueries:
+      merged &&
+      ((mergedResults) => {
+        const resultsMap = new Map<Query, any>();
+        const unmerged = merged.unmerge(mergedResults);
+        for (let i = 0; i < unmerged.length; i++) {
+          resultsMap.set(definitions[i].query, unmerged[i]);
+        }
+        return mergedQueries.map((d) => resultsMap.get(d));
+      }),
+    unmergeAllQueries: merged
+      ? ([mergedResults, ...otherResults]) => {
+          const resultsMap = new Map<Query, any>();
+          const unmerged = merged.unmerge(mergedResults);
+          for (let i = 0; i < unmerged.length; i++) {
+            resultsMap.set(definitions[i].query, unmerged[i]);
+          }
+
+          for (let i = 0; i < otherResults.length; i++) {
+            resultsMap.set(unmergedQueries[i], otherResults[i]);
+          }
+
+          return queries.map((d) => resultsMap.get(d));
+        }
+      : (v) => v,
   };
 }
 
