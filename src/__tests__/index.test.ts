@@ -1,8 +1,13 @@
 import merge, {Batch} from '../';
 
 import {ApolloServer, gql as gqls} from 'apollo-server';
-import gql from 'graphql-tag';
+import gql, {disableFragmentWarnings} from 'graphql-tag';
 import {print} from 'graphql';
+
+/**
+ * We want to test that they don't break things
+ */
+disableFragmentWarnings();
 
 // A schema is a collection of type definitions (hence "typeDefs")
 // that together define the "shape" of queries that are executed against
@@ -519,6 +524,153 @@ Array [
     "variables": Object {
       "b": 4,
       "c": 42,
+      "id": 3,
+    },
+  },
+]
+`);
+});
+
+test('batch fragments', async () => {
+  const queries: any[] = [];
+  const batch = new Batch(async ({query, variables}) => {
+    const q = {
+      query: print(query),
+      variables,
+    };
+    queries.push(q);
+    const result = await server.executeOperation(q);
+    if (result.errors && result.errors.length) {
+      throw new Error(JSON.stringify(result.errors));
+    }
+    return result.data;
+  });
+
+  const results = Promise.all([
+    expect(
+      batch.queue({
+        query: gql`
+          query($id: Int!) {
+            user(id: $id) {
+              id
+              ...UserTeams
+            }
+          }
+
+          fragment UserTeams on User {
+            teams {
+              name
+            }
+          }
+        `,
+        variables: {id: 3},
+      }),
+    ).resolves.toMatchInlineSnapshot(`
+Object {
+  "user": Object {
+    "id": 3,
+    "teams": Array [
+      Object {
+        "name": "Team A",
+      },
+    ],
+  },
+}
+`),
+    expect(
+      batch.queue({
+        query: gql`
+          query($id: Int!) {
+            user(id: $id) {
+              id
+              ...UserTeams
+            }
+          }
+
+          fragment UserTeams on User {
+            teams {
+              name
+            }
+          }
+        `,
+        variables: {id: 4},
+      }),
+    ).resolves.toMatchInlineSnapshot(`
+Object {
+  "user": Object {
+    "id": 4,
+    "teams": Array [
+      Object {
+        "name": "Team A",
+      },
+    ],
+  },
+}
+`),
+    expect(
+      batch.queue({
+        query: gql`
+          query($id: Int!) {
+            user(id: $id) {
+              id
+              ...UserTeams
+            }
+          }
+
+          fragment UserTeams on User {
+            teams {
+              id
+            }
+          }
+        `,
+        variables: {id: 3},
+      }),
+    ).resolves.toMatchInlineSnapshot(`
+Object {
+  "user": Object {
+    "id": 3,
+    "teams": Array [
+      Object {
+        "id": 1,
+      },
+    ],
+  },
+}
+`),
+  ]);
+  await Promise.all([batch.run(), results]);
+  expect(queries).toMatchInlineSnapshot(`
+Array [
+  Object {
+    "query": "query ($id: Int!, $b: Int!) {
+  user(id: $id) {
+    id
+    ...UserTeams
+  }
+  b: user(id: $b) {
+    id
+    ...UserTeams
+  }
+  c: user(id: $id) {
+    id
+    ...b
+  }
+}
+
+fragment UserTeams on User {
+  teams {
+    name
+  }
+}
+
+fragment b on User {
+  teams {
+    id
+  }
+}
+",
+    "variables": Object {
+      "b": 4,
       "id": 3,
     },
   },
