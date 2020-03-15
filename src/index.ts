@@ -12,6 +12,64 @@ import {
 } from 'graphql';
 import {generateAlphabeticNameFromNumber} from 'generate-alphabetic-name';
 
+export class Batch {
+  private _started = false;
+  private readonly _queue: Query[] = [];
+  private readonly _resolvers = new Map<
+    Query,
+    {resolve: (v: any) => void; reject: (e: any) => void}
+  >();
+  private readonly _run: (q: Query) => Promise<any>;
+  constructor(run: (q: Query) => Promise<any>) {
+    this._run = run;
+  }
+  public async queue({query, variables}: Query) {
+    if (this._started) {
+      throw new Error(
+        'This batch has already started, please create a fresh batch',
+      );
+    }
+    return await new Promise((resolve, reject) => {
+      // we take a shallow clone because it is valid to run
+      // the same query multiple times
+      const q = {query, variables};
+      this._queue.push(q);
+      this._resolvers.set(q, {resolve, reject});
+    });
+  }
+  public async run() {
+    if (this._started) {
+      throw new Error('You cannot run the same batch multiple times');
+    }
+    this._started = true;
+    const merged = merge(this._queue);
+    await Promise.all([
+      ...merged.unmergedQueries.map(async (q) => {
+        const res = this._resolvers.get(q)!;
+        try {
+          res.resolve(await this._run(q));
+        } catch (ex) {
+          res.reject(ex);
+        }
+      }),
+      merged.mergedQuery &&
+        this._run(merged.mergedQuery)
+          .then((results) => {
+            const unmerged = merged.unmergeMergedQueries!(results);
+            for (let i = 0; i < unmerged.length; i++) {
+              const res = this._resolvers.get(merged.mergedQueries[i])!;
+              res.resolve(unmerged[i]);
+            }
+          })
+          .catch((err) => {
+            for (const q of merged.mergedQueries) {
+              const res = this._resolvers.get(q)!;
+              res.reject(err);
+            }
+          }),
+    ]);
+  }
+}
 export type Query = {query: DocumentNode; variables: any};
 export default function merge(
   queries: Query[],
