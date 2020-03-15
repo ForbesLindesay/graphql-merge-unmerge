@@ -9,6 +9,7 @@ import {
   ValueNode,
   ArgumentNode,
   NameNode,
+  FragmentDefinitionNode,
 } from 'graphql';
 import {generateAlphabeticNameFromNumber} from 'generate-alphabetic-name';
 
@@ -70,7 +71,9 @@ export class Batch {
     ]);
   }
 }
+
 export type Query = {query: DocumentNode; variables: any};
+
 export default function merge(
   queries: Query[],
 ): {
@@ -100,20 +103,59 @@ export default function merge(
     definition: {query: OperationDefinitionNode; variables: any};
   }[] = [];
 
+  const fragments: FragmentDefinitionNode[] = [];
+  const nextFragmentName = uniqueNameSet();
+  const fragmentNames = new Map<FragmentDefinitionNode, string>();
   for (const q of queries) {
+    const queryOps = q.query.definitions.filter(
+      (d) => d.kind === 'OperationDefinition' && d.operation === 'query',
+    );
     if (
-      q.query.definitions.length === 1 &&
-      q.query.definitions[0].kind === 'OperationDefinition' &&
-      q.query.definitions[0].operation === 'query' &&
-      (!q.query.definitions[0].directives ||
-        q.query.definitions[0].directives.length === 0) &&
-      q.query.definitions[0].selectionSet.selections.every(
-        (s) => s.kind === 'Field',
-      )
+      q.query.definitions.every(
+        (d) =>
+          ((d.kind === 'OperationDefinition' &&
+            d.operation === 'query' &&
+            d.selectionSet.selections.every((s) => s.kind === 'Field')) ||
+            d.kind === 'FragmentDefinition') &&
+          !d.directives?.length,
+      ) &&
+      queryOps.length === 1
     ) {
+      const query = queryOps[0] as OperationDefinitionNode;
+      const fragmentNameMapping = new Map<string, string>();
+      for (const fragment of q.query.definitions.filter(
+        (d): d is FragmentDefinitionNode => d.kind === 'FragmentDefinition',
+      )) {
+        const oldName = fragment.name.value;
+        let newName = fragmentNames.get(fragment);
+        if (!newName) {
+          newName = nextFragmentName(oldName);
+          fragmentNames.set(fragment, newName);
+          fragments.push(
+            oldName === newName
+              ? fragment
+              : {
+                  ...fragment,
+                  name: {...fragment.name, value: newName},
+                },
+          );
+        }
+        if (oldName !== newName) fragmentNameMapping.set(oldName, newName);
+      }
       definitions.push({
         query: q,
-        definition: {query: q.query.definitions[0], variables: q.variables},
+        definition: {
+          query: fragmentNameMapping.size
+            ? {
+                ...query,
+                selectionSet: renameFragments(
+                  query.selectionSet,
+                  fragmentNameMapping,
+                ),
+              }
+            : query,
+          variables: q.variables,
+        },
       });
       mergedQueries.push(q);
     } else {
@@ -128,7 +170,7 @@ export default function merge(
   const mergedQuery: Query | undefined = merged && {
     query: {
       kind: 'Document',
-      definitions: [merged.query],
+      definitions: [merged.query, ...fragments],
     },
     variables: merged.variables,
   };
@@ -327,6 +369,42 @@ function renameVariables(
           return {
             ...s,
             selectionSet: renameVariables(s.selectionSet, variableMapping),
+          };
+      }
+    }),
+  };
+}
+
+function renameFragments(
+  set: SelectionSetNode,
+  fragmentNameMapping: Map<string, string>,
+) {
+  if (fragmentNameMapping.size === 0) return set;
+  return {
+    ...set,
+    selections: set.selections.map((s):
+      | FieldNode
+      | FragmentSpreadNode
+      | InlineFragmentNode => {
+      switch (s.kind) {
+        case 'Field':
+          return {
+            ...s,
+            selectionSet:
+              s.selectionSet &&
+              renameFragments(s.selectionSet, fragmentNameMapping),
+          };
+        case 'FragmentSpread':
+          const newName = fragmentNameMapping.get(s.name.value);
+          if (!newName) return s;
+          return {
+            ...s,
+            name: {...s.name, value: newName},
+          };
+        case 'InlineFragment':
+          return {
+            ...s,
+            selectionSet: renameFragments(s.selectionSet, fragmentNameMapping),
           };
       }
     }),
