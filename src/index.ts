@@ -13,18 +13,35 @@ import {
 } from 'graphql';
 import {generateAlphabeticNameFromNumber} from 'generate-alphabetic-name';
 
+declare const DataSymbol: unique symbol;
+declare class DataClass {
+  private _type: typeof DataSymbol;
+}
+type Data = undefined | ({[key: string]: any} & DataClass);
+type Variables = any;
+type FormattedError = {readonly path?: (string | number)[]};
+
+interface GraphQLResponseInternal {
+  data?: Data;
+  errors?: readonly FormattedError[];
+}
+
+export interface GraphQLResponse {
+  data?: any;
+  errors?: readonly any[];
+}
 export class Batch {
   private _started = false;
   private readonly _queue: Query[] = [];
   private readonly _resolvers = new Map<
     Query,
-    {resolve: (v: any) => void; reject: (e: any) => void}
+    {resolve: (v: GraphQLResponse) => void; reject: (e: Error) => void}
   >();
-  private readonly _run: (q: Query) => Promise<any>;
-  constructor(run: (q: Query) => Promise<any>) {
+  private readonly _run: (q: Query) => Promise<GraphQLResponseInternal>;
+  constructor(run: (q: Query) => Promise<GraphQLResponse>) {
     this._run = run;
   }
-  public async queue({query, variables}: Query) {
+  public async queue({query, variables}: Query): Promise<GraphQLResponse> {
     if (this._started) {
       throw new Error(
         'This batch has already started, please create a fresh batch',
@@ -38,12 +55,9 @@ export class Batch {
       this._resolvers.set(q, {resolve, reject});
     });
   }
-  public async run() {
-    if (this._started) {
-      throw new Error('You cannot run the same batch multiple times');
-    }
-    this._started = true;
-    const merged = merge(this._queue);
+  private async _runAndReport(input: Query[], isSecondAttempt = false) {
+    if (!input.length) return;
+    const merged = merge(input);
     await Promise.all([
       ...merged.unmergedQueries.map(async (q) => {
         const res = this._resolvers.get(q)!;
@@ -55,11 +69,34 @@ export class Batch {
       }),
       merged.mergedQuery &&
         this._run(merged.mergedQuery)
-          .then((results) => {
+          .then(async (results) => {
             const unmerged = merged.unmergeMergedQueries!(results);
-            for (let i = 0; i < unmerged.length; i++) {
-              const res = this._resolvers.get(merged.mergedQueries[i])!;
-              res.resolve(unmerged[i]);
+            if (
+              results.errors &&
+              results.errors.length &&
+              !isSecondAttempt &&
+              input.length > 1
+            ) {
+              const nextBatch: Query[] = [];
+
+              const errored = unmerged.map((response, i) => {
+                if (response.errors) {
+                  return this._runAndReport([input[i]], true);
+                } else {
+                  nextBatch.push(input[i]);
+                  return null;
+                }
+              });
+              await Promise.all([errored, this._runAndReport(nextBatch, true)]);
+            } else {
+              for (let i = 0; i < unmerged.length; i++) {
+                const res = this._resolvers.get(merged.mergedQueries[i])!;
+                if (!unmerged[i].errors && results.errors) {
+                  res.resolve({...unmerged[i], errors: results.errors});
+                } else {
+                  res.resolve(unmerged[i]);
+                }
+              }
             }
           })
           .catch((err) => {
@@ -70,9 +107,16 @@ export class Batch {
           }),
     ]);
   }
+  public async run() {
+    if (this._started) {
+      throw new Error('You cannot run the same batch multiple times');
+    }
+    this._started = true;
+    await this._runAndReport(this._queue);
+  }
 }
 
-export type Query = {query: DocumentNode; variables: any};
+export type Query = {query: DocumentNode; variables: Variables};
 
 export default function merge(
   queries: Query[],
@@ -81,8 +125,10 @@ export default function merge(
   mergedQueries: Query[];
   unmergedQueries: Query[];
   allQueries: Query[];
-  unmergeMergedQueries: ((result: any) => any[]) | undefined;
-  unmergeAllQueries: (results: any[]) => any[];
+  unmergeMergedQueries:
+    | ((result: GraphQLResponse) => GraphQLResponse[])
+    | undefined;
+  unmergeAllQueries: (results: GraphQLResponse[]) => GraphQLResponse[];
 } {
   if (queries.length === 1) {
     return {
@@ -100,7 +146,7 @@ export default function merge(
   const unmergedQueries: Query[] = [];
   const definitions: {
     query: Query;
-    definition: {query: OperationDefinitionNode; variables: any};
+    definition: {query: OperationDefinitionNode; variables: Variables};
   }[] = [];
 
   const fragments: FragmentDefinitionNode[] = [];
@@ -184,26 +230,36 @@ export default function merge(
     unmergeMergedQueries:
       merged &&
       ((mergedResults) => {
-        const resultsMap = new Map<Query, any>();
-        const unmerged = merged.unmerge(mergedResults);
-        for (let i = 0; i < unmerged.length; i++) {
-          resultsMap.set(definitions[i].query, unmerged[i]);
+        const resultsMap = new Map<Query, GraphQLResponseInternal>();
+        const unmergedData = merged.unmergeData(mergedResults.data);
+        const unmergedErrors = merged.unmergeErrors(mergedResults.errors || []);
+        for (let i = 0; i < definitions.length; i++) {
+          resultsMap.set(definitions[i].query, {
+            data: unmergedData[i],
+            errors: unmergedErrors[i].length ? unmergedErrors[i] : undefined,
+          });
         }
-        return mergedQueries.map((d) => resultsMap.get(d));
+        return mergedQueries.map((d) => resultsMap.get(d)!);
       }),
     unmergeAllQueries: merged
       ? ([mergedResults, ...otherResults]) => {
-          const resultsMap = new Map<Query, any>();
-          const unmerged = merged.unmerge(mergedResults);
-          for (let i = 0; i < unmerged.length; i++) {
-            resultsMap.set(definitions[i].query, unmerged[i]);
+          const resultsMap = new Map<Query, GraphQLResponseInternal>();
+          const unmergedData = merged.unmergeData(mergedResults.data);
+          const unmergedErrors = merged.unmergeErrors(
+            mergedResults.errors || [],
+          );
+          for (let i = 0; i < definitions.length; i++) {
+            resultsMap.set(definitions[i].query, {
+              data: unmergedData[i],
+              errors: unmergedErrors[i].length ? unmergedErrors[i] : undefined,
+            });
           }
 
           for (let i = 0; i < otherResults.length; i++) {
             resultsMap.set(unmergedQueries[i], otherResults[i]);
           }
 
-          return queries.map((d) => resultsMap.get(d));
+          return queries.map((d) => resultsMap.get(d)!);
         }
       : (v) => v,
   };
@@ -241,9 +297,9 @@ function valueNodesAreEqual(
 }
 function findExistingVariable(
   defs: VariableDefinitionNode[],
-  values: any,
+  values: Variables,
   def: VariableDefinitionNode,
-  value: any,
+  value: Variables,
 ) {
   for (const d of defs) {
     if (
@@ -259,17 +315,21 @@ function findExistingVariable(
 }
 
 function mergeDefinitions(
-  definitions: {query: OperationDefinitionNode; variables: any}[],
+  definitions: {query: OperationDefinitionNode; variables: Variables}[],
 ): {
   query: OperationDefinitionNode;
-  variables: any;
-  unmerge: (results: any) => any[];
+  variables: Variables;
+  unmergeData: (results: Data) => Data[];
+  unmergeErrors: (results: readonly FormattedError[]) => FormattedError[][];
 } {
   const variableNames = uniqueNameSet();
   const variableDefinitions: VariableDefinitionNode[] = [];
-  const variables: any = {};
+  const variables: Variables = {};
   const selections: FieldNode[] = [];
-  const extractResults: ((r: any) => any)[] = [];
+  const extractResults: {
+    extractData: (r: Data) => Data;
+    errorPath: (path: (string | number)[]) => (string | number)[] | null;
+  }[] = [];
 
   for (const {query, variables: localVariables} of definitions) {
     const variableMapping = new Map<string, string>();
@@ -323,7 +383,23 @@ function mergeDefinitions(
       },
     },
     variables,
-    unmerge: (v) => extractResults.map((e) => e(v)),
+    unmergeData: (data) => extractResults.map((e) => e.extractData(data)),
+    unmergeErrors: (errors) => {
+      return extractResults.map((e) => {
+        const outputErrors: FormattedError[] = [];
+        for (const error of errors) {
+          if (error.path) {
+            const path = e.errorPath(error.path);
+            if (path) {
+              outputErrors.push({...error, path});
+            }
+          } else {
+            outputErrors.push(error);
+          }
+        }
+        return outputErrors;
+      });
+    },
   };
 }
 
@@ -412,11 +488,13 @@ function renameFragments(
 }
 
 function selectSelectionSet(
-  value: any,
+  value: Data,
   set: SelectionSetNode | undefined,
-): any {
+): Data {
   if (!set) return value;
-  if (Array.isArray(value)) return value.map((v) => selectSelectionSet(v, set));
+  if (Array.isArray(value)) {
+    return value.map((v) => selectSelectionSet(v, set)) as any;
+  }
   if (!value) return value;
   const result: any = {};
   for (const selection of set.selections) {
@@ -430,22 +508,52 @@ function selectSelectionSet(
   }
   return result;
 }
+function errorPathForSelectionSet(
+  path: (string | number)[],
+  set: SelectionSetNode | undefined,
+): null | (string | number)[] {
+  if (!set) return path;
+  const keyIndex = path.findIndex((p) => typeof p === 'string');
+  if (keyIndex === -1) {
+    return path;
+  }
+  const key = path[keyIndex];
+  for (const selection of set.selections) {
+    if (selection.kind !== 'Field') {
+      return path;
+    }
+    const name = selection.alias?.value || selection.name.value;
+    if (key === name) {
+      const childrenInput = path.slice(keyIndex + 1);
+      if (errorPathForSelectionSet(childrenInput, selection.selectionSet)) {
+        return path;
+      } else {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 function selectByFieldMappings(
-  value: any,
+  value: Data,
   set: {
     alias: string;
     output: string;
-    mapResult?: ((v: any) => any) | undefined;
+    children?:
+      | {
+          extractData: (v: Data) => Data;
+          errorPath: (v: (string | number)[]) => (string | number)[] | null;
+        }
+      | undefined;
   }[],
-): any {
-  if (!set) return value;
+): Data {
   if (Array.isArray(value))
-    return value.map((v) => selectByFieldMappings(v, set));
+    return value.map((v) => selectByFieldMappings(v, set)) as any;
   if (!value) return value;
   const result: any = {};
   for (const mapping of set) {
-    result[mapping.output] = mapping.mapResult
-      ? mapping.mapResult(value[mapping.alias])
+    result[mapping.output] = mapping.children
+      ? mapping.children.extractData(value[mapping.alias])
       : value[mapping.alias];
   }
   return result;
@@ -454,10 +562,13 @@ function mergeFields(existingFields: FieldNode[], newFields: FieldNode[]) {
   const aliasNames = uniqueNameSet(
     existingFields.map((e) => e.alias?.value || e.name.value),
   );
-  const fieldMapppings: {
+  const fieldMappings: {
     alias: string;
     output: string;
-    mapResult?: (v: any) => any;
+    children?: {
+      extractData: (v: Data) => Data;
+      errorPath: (v: (string | number)[]) => null | (string | number)[];
+    };
   }[] = [];
   for (const newField of newFields) {
     const outputName = newField.alias?.value || newField.name.value;
@@ -476,12 +587,16 @@ function mergeFields(existingFields: FieldNode[], newFields: FieldNode[]) {
       const unmergeable = newField.selectionSet?.selections.some(
         (s) => s.kind !== 'Field',
       );
-      fieldMapppings.push({
+      fieldMappings.push({
         alias: aliasName,
         output: outputName,
-        mapResult: unmergeable
+        children: unmergeable
           ? undefined
-          : (v) => selectSelectionSet(v, newField.selectionSet),
+          : {
+              extractData: (v) => selectSelectionSet(v, newField.selectionSet),
+              errorPath: (p) =>
+                errorPathForSelectionSet(p, newField.selectionSet),
+            },
       });
     } else {
       const existingSelectionSet =
@@ -489,9 +604,14 @@ function mergeFields(existingFields: FieldNode[], newFields: FieldNode[]) {
       const newSelectionSet = newField.selectionSet;
       const newSelections =
         existingSelectionSet && existingSelectionSet.selections.slice();
-      let mapResult: undefined | ((r: any) => any);
+      let children:
+        | undefined
+        | {
+            extractData: (v: Data) => Data;
+            errorPath: (v: (string | number)[]) => null | (string | number)[];
+          };
       if (newSelections && newSelectionSet) {
-        mapResult = mergeFields(
+        children = mergeFields(
           newSelections as FieldNode[],
           newSelectionSet.selections as FieldNode[],
         );
@@ -507,10 +627,37 @@ function mergeFields(existingFields: FieldNode[], newFields: FieldNode[]) {
       const aliasName =
         existingFields[existingFieldIndex].alias?.value ||
         existingFields[existingFieldIndex].name.value;
-      fieldMapppings.push({alias: aliasName, output: outputName, mapResult});
+      fieldMappings.push({alias: aliasName, output: outputName, children});
     }
   }
-  return (r: any) => selectByFieldMappings(r, fieldMapppings);
+  return {
+    extractData: (data: Data): Data => {
+      return selectByFieldMappings(data, fieldMappings);
+    },
+    errorPath: (path: (string | number)[]): null | (string | number)[] => {
+      const keyIndex = path.findIndex((p) => typeof p === 'string');
+      if (keyIndex === -1) {
+        return path;
+      }
+      const key = path[keyIndex];
+      for (const f of fieldMappings) {
+        if (f.alias === key) {
+          if (!f.children) {
+            return f.output === f.alias
+              ? path
+              : [...path.slice(0, keyIndex), f.output];
+          }
+          const childrenInput = path.slice(keyIndex + 1);
+          const childrenResult = f.children.errorPath(childrenInput);
+          if (!childrenResult) return null;
+          return f.output === f.alias && childrenInput === childrenResult
+            ? path
+            : [...path.slice(0, keyIndex), f.output, ...childrenResult];
+        }
+      }
+      return null;
+    },
+  };
 }
 
 function fieldsCanBeMerged(a: FieldNode, b: FieldNode) {
