@@ -33,6 +33,8 @@ const typeDefs = gqls`
     node(id: Int): Result
     user(id: Int): User
     team(id: Int): Team
+    teamRequired(id: Int): Team!
+    errorable: String!
   }
 `;
 
@@ -73,6 +75,12 @@ const resolvers = {
     },
     team(_: unknown, {id}: {id: number}) {
       return records.find((r) => r.t === 'Team' && r.id === id) || null;
+    },
+    teamRequired(_: unknown, {id}: {id: number}) {
+      return records.find((r) => r.t === 'Team' && r.id === id) || null;
+    },
+    errorable() {
+      throw new Error('Oops');
     },
   },
   User: {
@@ -241,21 +249,15 @@ test('merge unmerge', async () => {
       },
     ]
   `);
-  const results = merged.unmergeAllQueries(
-    (
-      await Promise.all(
-        merged.allQueries.map(({query, variables}) =>
-          server.executeOperation({query: print(query), variables}),
-        ),
-      )
-    ).map((r) => {
-      if (!r.data) {
-        expect(r.errors).toBeFalsy();
-      }
-      return r.data;
-    }),
+
+  const mergedResults = await Promise.all(
+    merged.allQueries.map(({query, variables}) =>
+      server.executeOperation({query: print(query), variables}),
+    ),
   );
-  expect(results).toMatchInlineSnapshot(`
+  const results = merged.unmergeAllQueries(mergedResults);
+  results.forEach((r) => expect(r.errors).toBeFalsy());
+  expect(results.map((r) => r.data)).toMatchInlineSnapshot(`
     Array [
       Object {
         "user": Object {
@@ -314,27 +316,28 @@ test('batch', async () => {
       variables,
     };
     queries.push(q);
-    const result = await server.executeOperation(q);
-    if (result.errors && result.errors.length) {
-      throw new Error(JSON.stringify(result.errors));
-    }
-    return result.data;
+    return await server.executeOperation(q);
   });
   const results = Promise.all([
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-              teams {
-                name
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+                teams {
+                  name
+                }
               }
             }
-          }
-        `,
-        variables: {id: 3},
-      }),
+          `,
+          variables: {id: 3},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
       Object {
         "user": Object {
@@ -348,17 +351,22 @@ test('batch', async () => {
       }
     `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-              name
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+                name
+              }
             }
-          }
-        `,
-        variables: {id: 3},
-      }),
+          `,
+          variables: {id: 3},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
       Object {
         "user": Object {
@@ -368,16 +376,21 @@ test('batch', async () => {
       }
     `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              name
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                name
+              }
             }
-          }
-        `,
-        variables: {id: 4},
-      }),
+          `,
+          variables: {id: 4},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
       Object {
         "user": Object {
@@ -386,149 +399,249 @@ test('batch', async () => {
       }
     `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              name
-            }
-          }
-        `,
-        variables: {id: 42},
-      }),
-    ).resolves.toMatchInlineSnapshot(`
-      Object {
-        "user": null,
-      }
-    `),
-    expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-            }
-          }
-        `,
-        variables: {id: 42},
-      }),
-    ).resolves.toMatchInlineSnapshot(`
-      Object {
-        "user": null,
-      }
-    `),
-    expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              teams {
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
                 name
               }
             }
-          }
-        `,
-        variables: {id: 42},
-      }),
+          `,
+          variables: {id: 42},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "user": null,
-}
-`),
+      Object {
+        "user": null,
+      }
+    `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            node(id: $id) {
-              ... on User {
-                name
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+              }
+            }
+          `,
+          variables: {id: 42},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
+    ).resolves.toMatchInlineSnapshot(`
+      Object {
+        "user": null,
+      }
+    `),
+    expect(
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
                 teams {
                   name
                 }
               }
             }
-          }
-        `,
-        variables: {id: 4},
-      }),
+          `,
+          variables: {id: 42},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "node": Object {
-    "name": "User B",
-    "teams": Array [
       Object {
-        "name": "Team A",
-      },
-    ],
-  },
-}
-`),
+        "user": null,
+      }
+    `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            node(id: $id) {
-              ... on User {
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              node(id: $id) {
+                ... on User {
+                  name
+                  teams {
+                    name
+                  }
+                }
+              }
+            }
+          `,
+          variables: {id: 4},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
+    ).resolves.toMatchInlineSnapshot(`
+      Object {
+        "node": Object {
+          "name": "User B",
+          "teams": Array [
+            Object {
+              "name": "Team A",
+            },
+          ],
+        },
+      }
+    `),
+    expect(
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              node(id: $id) {
+                ... on User {
+                  name
+                }
+              }
+            }
+          `,
+          variables: {id: 4},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
+    ).resolves.toMatchInlineSnapshot(`
+      Object {
+        "node": Object {
+          "name": "User B",
+        },
+      }
+    `),
+    expect(
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              teamRequired(id: $id) {
                 name
               }
             }
-          }
-        `,
-        variables: {id: 4},
-      }),
+          `,
+          variables: {id: 9999},
+        })
+        .then((r) => {
+          return r.errors;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "node": Object {
-    "name": "User B",
-  },
-}
-`),
+      Array [
+        [GraphQLError: Cannot return null for non-nullable field Query.teamRequired.],
+      ]
+    `),
   ]);
   await Promise.all([batch.run(), results]);
   expect(queries).toMatchInlineSnapshot(`
-Array [
-  Object {
-    "query": "query ($id: Int!, $b: Int!, $c: Int!) {
-  user(id: $id) {
-    id
-    teams {
-      name
-    }
-    name
-  }
-  b: user(id: $b) {
-    name
-  }
-  c: user(id: $c) {
-    name
-    id
-    teams {
-      name
-    }
-  }
-  node(id: $b) {
-    ... on User {
-      name
-      teams {
+    Array [
+      Object {
+        "query": "query ($id: Int!, $b: Int!, $c: Int!, $d: Int!) {
+      user(id: $id) {
+        id
+        teams {
+          name
+        }
+        name
+      }
+      b: user(id: $b) {
+        name
+      }
+      c: user(id: $c) {
+        name
+        id
+        teams {
+          name
+        }
+      }
+      node(id: $b) {
+        ... on User {
+          name
+          teams {
+            name
+          }
+        }
+      }
+      d: node(id: $b) {
+        ... on User {
+          name
+        }
+      }
+      teamRequired(id: $d) {
         name
       }
     }
-  }
-  d: node(id: $b) {
-    ... on User {
-      name
+    ",
+        "variables": Object {
+          "b": 4,
+          "c": 42,
+          "d": 9999,
+          "id": 3,
+        },
+      },
+      Object {
+        "query": "query ($id: Int!) {
+      teamRequired(id: $id) {
+        name
+      }
     }
-  }
-}
-",
-    "variables": Object {
-      "b": 4,
-      "c": 42,
-      "id": 3,
-    },
-  },
-]
-`);
+    ",
+        "variables": Object {
+          "id": 9999,
+        },
+      },
+      Object {
+        "query": "query ($id: Int!, $b: Int!, $c: Int!) {
+      user(id: $id) {
+        id
+        teams {
+          name
+        }
+        name
+      }
+      b: user(id: $b) {
+        name
+      }
+      c: user(id: $c) {
+        name
+        id
+        teams {
+          name
+        }
+      }
+      node(id: $b) {
+        ... on User {
+          name
+          teams {
+            name
+          }
+        }
+      }
+      d: node(id: $b) {
+        ... on User {
+          name
+        }
+      }
+    }
+    ",
+        "variables": Object {
+          "b": 4,
+          "c": 42,
+          "id": 3,
+        },
+      },
+    ]
+  `);
 });
 
 test('batch fragments', async () => {
@@ -539,141 +652,152 @@ test('batch fragments', async () => {
       variables,
     };
     queries.push(q);
-    const result = await server.executeOperation(q);
-    if (result.errors && result.errors.length) {
-      throw new Error(JSON.stringify(result.errors));
-    }
-    return result.data;
+    return await server.executeOperation(q);
   });
 
   const results = Promise.all([
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-              ...UserTeams
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+                ...UserTeams
+              }
             }
-          }
 
-          fragment UserTeams on User {
-            teams {
-              name
+            fragment UserTeams on User {
+              teams {
+                name
+              }
             }
-          }
-        `,
-        variables: {id: 3},
-      }),
+          `,
+          variables: {id: 3},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "user": Object {
-    "id": 3,
-    "teams": Array [
       Object {
-        "name": "Team A",
-      },
-    ],
-  },
-}
-`),
+        "user": Object {
+          "id": 3,
+          "teams": Array [
+            Object {
+              "name": "Team A",
+            },
+          ],
+        },
+      }
+    `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-              ...UserTeams
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+                ...UserTeams
+              }
             }
-          }
 
-          fragment UserTeams on User {
-            teams {
-              name
+            fragment UserTeams on User {
+              teams {
+                name
+              }
             }
-          }
-        `,
-        variables: {id: 4},
-      }),
+          `,
+          variables: {id: 4},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "user": Object {
-    "id": 4,
-    "teams": Array [
       Object {
-        "name": "Team A",
-      },
-    ],
-  },
-}
-`),
+        "user": Object {
+          "id": 4,
+          "teams": Array [
+            Object {
+              "name": "Team A",
+            },
+          ],
+        },
+      }
+    `),
     expect(
-      batch.queue({
-        query: gql`
-          query($id: Int!) {
-            user(id: $id) {
-              id
-              ...UserTeams
+      batch
+        .queue({
+          query: gql`
+            query($id: Int!) {
+              user(id: $id) {
+                id
+                ...UserTeams
+              }
             }
-          }
 
-          fragment UserTeams on User {
-            teams {
-              id
+            fragment UserTeams on User {
+              teams {
+                id
+              }
             }
-          }
-        `,
-        variables: {id: 3},
-      }),
+          `,
+          variables: {id: 3},
+        })
+        .then((r) => {
+          expect(r.errors).toBeFalsy();
+          return r.data;
+        }),
     ).resolves.toMatchInlineSnapshot(`
-Object {
-  "user": Object {
-    "id": 3,
-    "teams": Array [
       Object {
-        "id": 1,
-      },
-    ],
-  },
-}
-`),
+        "user": Object {
+          "id": 3,
+          "teams": Array [
+            Object {
+              "id": 1,
+            },
+          ],
+        },
+      }
+    `),
   ]);
   await Promise.all([batch.run(), results]);
   expect(queries).toMatchInlineSnapshot(`
-Array [
-  Object {
-    "query": "query ($id: Int!, $b: Int!) {
-  user(id: $id) {
-    id
-    ...UserTeams
-  }
-  b: user(id: $b) {
-    id
-    ...UserTeams
-  }
-  c: user(id: $id) {
-    id
-    ...b
-  }
-}
+    Array [
+      Object {
+        "query": "query ($id: Int!, $b: Int!) {
+      user(id: $id) {
+        id
+        ...UserTeams
+      }
+      b: user(id: $b) {
+        id
+        ...UserTeams
+      }
+      c: user(id: $id) {
+        id
+        ...b
+      }
+    }
 
-fragment UserTeams on User {
-  teams {
-    name
-  }
-}
+    fragment UserTeams on User {
+      teams {
+        name
+      }
+    }
 
-fragment b on User {
-  teams {
-    id
-  }
-}
-",
-    "variables": Object {
-      "b": 4,
-      "id": 3,
-    },
-  },
-]
-`);
+    fragment b on User {
+      teams {
+        id
+      }
+    }
+    ",
+        "variables": Object {
+          "b": 4,
+          "id": 3,
+        },
+      },
+    ]
+  `);
 });
