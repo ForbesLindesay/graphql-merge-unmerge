@@ -18,11 +18,7 @@ import gql from 'graphql-tag';
 import {print} from 'graphql';
 
 const batch = new Batch(async ({query, variables}) => {
-  const r = await callGraphQLServer({query: print(query), variables});
-  if (!r.data) {
-    throw new Error(JSON.stringify(r.errors));
-  }
-  return r.data;
+  return await callGraphQLServer({query: print(query), variables});
 });
 
 const resultA = batch.queue({
@@ -113,21 +109,14 @@ const merged = merge([
 ]);
 
 const results = merged.unmergeAllQueries(
-  (
-    await Promise.all(
-      // Even after merging, there could still be multiple "documents"
-      // representing the queries that need to be sent to the server.
-      // For fairly simple queries, there will almost always just be one
-      // query at the top level.
-      merged.allQueries.map(({query, variables}) =>
-        callGraphQLServer({query: print(query), variables}),
-      ),
-    )
-  ).map((r) => {
-    if (!r.data) {
-      throw new Error(JSON.stringify(r.errors));
-    }
-    return r.data;
-  }),
+  await Promise.all(
+    // Even after merging, there could still be multiple "documents"
+    // representing the queries that need to be sent to the server.
+    // For fairly simple queries, there will almost always just be one
+    // query at the top level.
+    merged.allQueries.map(({query, variables}) =>
+      callGraphQLServer({query: print(query), variables}),
+    ),
+  ),
 );
 ```
