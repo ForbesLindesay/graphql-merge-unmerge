@@ -22,7 +22,7 @@
   "devDependencies": {
     "@forbeslindesay/tsconfig": "^2.0.0",
     "@types/jest": "^24.0.18",
-    "apollo-server": "^2.11.0",
+    "apollo-server": "^2.14.2",
     "graphql-tag": "^2.10.3",
     "husky": "^3.0.8",
     "jest": "^24.9.0",
